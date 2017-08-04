@@ -22,6 +22,7 @@ public class Client {
         int bufsize = 2048;
         String stringDisplayedBeforeMsg = getClass().getName() + " >>> "; // string to be displayed before each command line message
         String packetIdentifier = "ZXF2L";
+        String request = "broadcast_search";
         
         // Find the server using UDP broadcast
         try 
@@ -31,9 +32,9 @@ public class Client {
             clientSocket.setBroadcast(true);
 
             //request message
-            byte[] sendData = (packetIdentifier + "DISCOVER_FUIFSERVER_REQUEST").getBytes();
+            byte[] sendData = (packetIdentifier + request).getBytes();
 
-            //Try the 255.255.255.255 first
+            
             try 
             {
                 DatagramPacket sendPacket = new DatagramPacket(sendData, sendData.length, InetAddress.getByName("255.255.255.255"), port);

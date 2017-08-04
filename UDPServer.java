@@ -1,8 +1,8 @@
+package udpserver;
+
 /*
  * @author bacom
  */
-
-package udpserver;
 
 public class UDPServer {
     public static void main(String[] args) 

@@ -7,14 +7,12 @@ import java.net.InetAddress;
 import java.net.NetworkInterface;
 import java.net.SocketException;
 import java.util.Enumeration;
-import java.util.Scanner;
 import java.util.logging.Level;
 import java.util.logging.Logger;
 
 /*
  * @author bacom
  */
-
 
 public class DiscoveryThread implements Runnable 
 {
@@ -23,6 +21,10 @@ public class DiscoveryThread implements Runnable
     int bufsize = 2048;
     String stringDisplayedBeforeMsg = getClass().getName() + " >>> "; // string to be displayed before each command line message
     String packetIdentifier = "ZXF2L";
+    String ethInfo = ""; //server network interface info
+    String responseString = ""; //server response to the client
+    byte[] sendData; //server response in byte array
+    DatagramPacket sendPacket; //packet for server response
     
     @Override
     public void run() 
@@ -46,101 +48,67 @@ public class DiscoveryThread implements Runnable
                 System.out.println(stringDisplayedBeforeMsg + "Packet from: " + packet.getAddress().getHostAddress());
                 System.out.println(stringDisplayedBeforeMsg + "Packet data: " + new String(packet.getData()));
 
-                //See if the packet holds the right command (message)
+                //See if the packet holds the right identifier 
                 System.out.println(stringDisplayedBeforeMsg + "Checking packet identifier...");
                 String message = new String(packet.getData()).trim();
                 if (message.substring(0, packetIdentifier.length()).equals(packetIdentifier))
                 {
                     //Send a response if identifier is correct
                     System.out.println(stringDisplayedBeforeMsg + "Packet identifier check - SUCCESS");
-                    
-                    //construct a list of the server's network interfaces
-                    String ethInfo = "";
+                    String command = message.substring(packetIdentifier.length());
+                    System.out.println("comandooo: " + command);
                     try 
                     {
-                        NetworkInterface ethInterface = NetworkInterface.getByName("eth0");
+                        if(command.equals("broadcast_search"))
                         {
-                            ethInfo += ethInterface.getDisplayName() + ';';
-                            Enumeration<InetAddress> Addresses = ethInterface.getInetAddresses();
-                            while(Addresses.hasMoreElements()) 
+                            //get server and BAS info
+                            //create extractors for getting server data and BAS config
+                            FiledataExtractor fileExtr = new FiledataExtractor();
+                            MACExtractor macExtr = new MACExtractor();
+                            try 
                             {
-                                //extract the MAC and Internet addresses to send back info
-                                InetAddress addr = Addresses.nextElement();
-                                byte[] mac = ethInterface.getHardwareAddress();
-                                String macString = "";
-                                for (int i = 0; i < mac.length; i++) 
-                                {
-                                    macString += String.format("%02X%s", mac[i], (i < mac.length - 1) ? ":" : "");
-                                }
-                                
-                                //get the rest of the interface info from /etc/network/interfaces
-                                File interfacesFile = new File("/etc/network/interfaces");
-                                boolean exists = interfacesFile.exists();
-                                Scanner scanner;
-                                PrintWriter writer;
-                                String line, trimmedLine;
-                                
-                                if(exists)
-                                {
-                                    scanner = new Scanner(new FileInputStream(interfacesFile));
-                                    
-                                    while (scanner.hasNextLine())
-                                    {
-                                        line = scanner.nextLine();
-                                        trimmedLine = line.trim();
-                                        if (trimmedLine.startsWith("iface eth0 inet static"))
-                                        {
-                                            while(!trimmedLine.isEmpty())
-                                            {
-                                                if(trimmedLine.startsWith("address"))
-                                                {
-                                                    trimmedLine = trimmedLine.substring("address".length()+1);
-                                                    ethInfo += trimmedLine + ';';
-                                                }
-                                                else if(trimmedLine.startsWith("netmask"))
-                                                {
-                                                    trimmedLine = trimmedLine.substring("netmask".length()+1);
-                                                    ethInfo += trimmedLine + ';';
-                                                }
-                                                else if(trimmedLine.startsWith("network"))
-                                                {
-                                                    trimmedLine = trimmedLine.substring("network".length()+1);
-                                                    ethInfo += trimmedLine + ';';
-                                                }
-                                                else if(trimmedLine.startsWith("broadcast"))
-                                                {
-                                                    trimmedLine = trimmedLine.substring("broadcast".length()+1);
-                                                    ethInfo += trimmedLine + ';';
-                                                }
-                                                else if(trimmedLine.startsWith("gateway"))
-                                                {
-                                                    trimmedLine = trimmedLine.substring("gateway".length()+1);
-                                                    ethInfo += trimmedLine + ';';
-                                                }
-                                                line = scanner.nextLine();
-                                                trimmedLine = line.trim();
-                                            }
-                                        }
-                                    }
-                                }
-                                //construct the actual message
-                                ethInfo += macString + ';';
-                            }
-                        }
-                    } catch (SocketException e) 
-                    {
-                        throw new RuntimeException(e);
-                    }
-                    
-                    //construct the return message and send it
-                    String responseString = packetIdentifier + ';' + ethInfo;
-                    System.out.println("Respo " + responseString);
-                    byte[] sendData = responseString.getBytes();
-                    DatagramPacket sendPacket = new DatagramPacket(sendData, sendData.length, packet.getAddress(), packet.getPort());
-                    serverSocket.send(sendPacket);
+                                ethInfo = "";
+                                //get the eth0 info
+                                NetworkInterface ethInterface = NetworkInterface.getByName("eth0");
+                                ethInfo += "interface=" + ethInterface.getDisplayName() + ';';
 
-                    System.out.println(stringDisplayedBeforeMsg + "Sent response packet to: " + sendPacket.getAddress().getHostAddress());
+                                //cycle through the internet addresses
+                                Enumeration<InetAddress> Addresses = ethInterface.getInetAddresses();
+
+                                while(Addresses.hasMoreElements()) 
+                                {
+                                    Addresses.nextElement();
+
+                                    //get the rest of the interface info from /etc/network/interfaces and add the MAC
+                                    byte[] mac = ethInterface.getHardwareAddress();
+                                    ethInfo += fileExtr.extractData(new File("/etc/network/interfaces"));
+                                    ethInfo += macExtr.getMacString(mac) + ';';
+                                    ethInfo += fileExtr.extractData(new File("/home/pi/bas/config.ini"));
+                                }
+                            } catch (SocketException e) 
+                            {
+                                throw new RuntimeException(e);
+                            }
+
+                            //construct the return message and send it via broadcast
+                            responseString = packetIdentifier + ';' + ethInfo;
+                            System.out.println("Response: " + responseString);
+                            sendData = responseString.getBytes();
+                            sendPacket = new DatagramPacket(sendData, sendData.length, InetAddress.getByName("255.255.255.255"), packet.getPort());
+                            serverSocket.send(sendPacket);
+                        }       
+                        else
+                        {
+                            //construct the return message and send it via broadcast
+                            responseString = "ERROR: Command not recognized";
+                            System.out.println("Response: " + responseString);
+                            sendData = responseString.getBytes();
+                            sendPacket = new DatagramPacket(sendData, sendData.length, InetAddress.getByName("255.255.255.255"), packet.getPort());
+                            serverSocket.send(sendPacket);
+                        }
+                    } catch (Exception e) {}
                 }
+                System.out.println(stringDisplayedBeforeMsg + "Sent response packet to: " + sendPacket.getAddress().getHostAddress());
             }
         }
         catch (IOException e) 
@@ -165,48 +133,40 @@ public class DiscoveryThread implements Runnable
     }
 }
 
-//                    //construct a list of the server's network interfaces
-//                    String interfaceList = "";
+                    //get server and BAS info
+                    //create extractors for getting server data and BAS config
+//                    FiledataExtractor fileExtr = new FiledataExtractor();
+//                    MACExtractor macExtr = new MACExtractor();
 //                    try 
 //                    {
-//                        //iterate through each network interface on the server
-//                        Enumeration<NetworkInterface> Interfaces = NetworkInterface.getNetworkInterfaces();
-//                        while (Interfaces.hasMoreElements()) 
+//                        ethInfo = "";
+//                        //get the eth0 info
+//                        NetworkInterface ethInterface = NetworkInterface.getByName("eth0");
+//                        ethInfo += "interface=" + ethInterface.getDisplayName() + ';';
+//                        
+//                        //cycle through the internet addresses
+//                        Enumeration<InetAddress> Addresses = ethInterface.getInetAddresses();
+//                        
+//                        while(Addresses.hasMoreElements()) 
 //                        {
-//                            NetworkInterface iface = Interfaces.nextElement();
+//                            Addresses.nextElement();
 //                            
-//                            //filter out 127.0.0.1 and inactive interfaces
-//                            if (iface.isLoopback() || !iface.isUp())
-//                                continue;
-//                            
-//                            Enumeration<InetAddress> Addresses = iface.getInetAddresses();
-//                               
-//                            while(Addresses.hasMoreElements()) 
-//                            {
-//                                //extract the MAC and Internet addresses to send back info
-//                                InetAddress addr = Addresses.nextElement();
-//                                byte[] mac = iface.getHardwareAddress();
-//                                String macString = "";
-//                                for (int i = 0; i < mac.length; i++) 
-//                                {
-//                                    macString += String.format("%02X%s", mac[i], (i < mac.length - 1) ? ":" : "");
-//                                }
-//                                
-//                                //construct the actual message
-//                                interfaceList += iface.getDisplayName() + ';';
-//                                interfaceList += addr.getHostAddress() + ';';
-//                                interfaceList += macString + ';';
-//                            }
+//                            //get the rest of the interface info from /etc/network/interfaces and add the MAC
+//                            byte[] mac = ethInterface.getHardwareAddress();
+//                            ethInfo += fileExtr.extractData(new File("/etc/network/interfaces"));
+//                            ethInfo += macExtr.getMacString(mac) + ';';
+//                            ethInfo += fileExtr.extractData(new File("/home/pi/bas/config.ini"));
 //                        }
 //                    } catch (SocketException e) 
 //                    {
 //                        throw new RuntimeException(e);
 //                    }
 //                    
-//                    //construct the return message and send it
-//                    String responseString = packetIdentifier + ';' + interfaceList;
+//                    //construct the return message and send it via broadcast
+//                    String responseString = packetIdentifier + ';' + ethInfo;
+//                    System.out.println("Response: " + responseString);
 //                    byte[] sendData = responseString.getBytes();
-//                    DatagramPacket sendPacket = new DatagramPacket(sendData, sendData.length, packet.getAddress(), packet.getPort());
+//                    DatagramPacket sendPacket = new DatagramPacket(sendData, sendData.length, InetAddress.getByName("255.255.255.255"), packet.getPort());
 //                    serverSocket.send(sendPacket);
 //
 //                    System.out.println(stringDisplayedBeforeMsg + "Sent response packet to: " + sendPacket.getAddress().getHostAddress());
